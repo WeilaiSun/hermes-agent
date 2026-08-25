@@ -8,7 +8,7 @@ import {
   tailBoundedRemend
 } from '@assistant-ui/react-streamdown'
 import type { code as streamdownCode } from '@streamdown/code'
-import { type ComponentProps, memo, useEffect, useMemo, useState } from 'react'
+import { type ComponentProps, memo, type ReactNode, useEffect, useMemo, useState } from 'react'
 
 import { ExpandableBlock } from '@/components/chat/expandable-block'
 import { PreviewAttachment } from '@/components/chat/preview-attachment'
@@ -39,6 +39,8 @@ import { cn } from '@/lib/utils'
 
 import { ArtifactCard } from './artifact-card'
 import { SessionRefLink } from './directive-text'
+import { splitFilePathTokens, FileCard } from '@/components/chat/file-card'
+
 import { detectEmbed, extractAlert, MarkdownAlert, RichCodeBlock, UrlEmbed } from './embeds'
 import { ResizableMarkdownTable, ResizableMarkdownTh } from './markdown-table'
 import { paragraphPlainText, TranscriptDirectiveLeaf, useIsClaimedDirective } from './transcript-directive'
@@ -191,6 +193,12 @@ function MediaAttachment({ path }: { path: string }) {
       }
     }
   }, [kind, path])
+
+  if (kind === 'file') {
+    // MEDIA: files (md/docx/xlsx/zip…) render as an inline file card with
+    // built-in preview instead of an external-app link.
+    return <FileCard path={path} />
+  }
 
   if (kind === 'image' && src) {
     return (
@@ -518,7 +526,7 @@ function MarkdownParagraph({
     // must out-specify Tailwind Typography's `prose` margins — so no
     // `my-*` here on purpose.
     <p className={cn('wrap-anywhere leading-(--dt-line-height)', className)} {...props}>
-      {children}
+      {renderParagraphChildren(children)}
     </p>
   )
 }
@@ -711,3 +719,31 @@ const MarkdownTextImpl = () => {
 }
 
 export const MarkdownText = memo(MarkdownTextImpl)
+
+// Splits paragraph text so bare file paths render as file cards while every
+// other child (inline code, links, emoji, etc.) stays untouched.
+function renderParagraphChildren(children: ReactNode): ReactNode {
+  if (typeof children === 'string') {
+    return splitFilePathTokens(children)
+  }
+
+  if (Array.isArray(children)) {
+    const parts: ReactNode[] = []
+
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i]
+
+      if (typeof child === 'string') {
+        for (const part of splitFilePathTokens(child)) {
+          parts.push(part)
+        }
+      } else {
+        parts.push(child)
+      }
+    }
+
+    return parts
+  }
+
+  return children
+}

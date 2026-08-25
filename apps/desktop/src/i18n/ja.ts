@@ -2885,6 +2885,14 @@ export const ja = defineLocale({
     }
   },
 
+  avatarEditor: {
+    title: 'アバターを編集',
+    description: '各参加者の表示名とアバターをカスタマイズします。',
+    youLabel: 'あなた（ユーザー）',
+    hermesLabel: 'Hermes（アシスタント）',
+    placeholder: '名前を入力'
+  },
+
   prompts: {
     gatewayDisconnected: 'Hermes ゲートウェイが接続されていません',
     sudoSendFailed: 'sudo パスワードを送信できませんでした',

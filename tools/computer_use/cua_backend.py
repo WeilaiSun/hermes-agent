@@ -2233,7 +2233,7 @@ class _CuaDriverSession:
             "isError": True,
         }
 
-    def call_tool(self, name: str, args: Dict[str, Any], timeout: float = 30.0) -> Dict[str, Any]:
+    def call_tool(self, name: str, args: Dict[str, Any], timeout: float = 60.0) -> Dict[str, Any]:
         # A prior session may have died (MCP drop / driver crash): its
         # lifecycle coro reset _started to False in its finally (#55048).
         if not self._started and name not in self._LIFECYCLE_CALLS:
@@ -2250,7 +2250,13 @@ class _CuaDriverSession:
                 timeout=timeout,
             )
         except Exception as e:
-            if self._is_transient_daemon_error(e):
+            # On Windows, list_windows / get_accessibility_tree can take 30+
+            # seconds when many processes have UI handles (500+ processes),
+            # causing TimeoutError on the MCP stdio bridge. The CLI transport
+            # (which talks to the daemon socket directly) is equally slow for
+            # the enumeration itself but avoids the stdio serialization
+            # overhead, so we fall back to it on timeout too.
+            if self._is_transient_daemon_error(e) or isinstance(e, TimeoutError):
                 if not self._transport_replay_is_safe(name):
                     self._notify_transport_reset()
                     return self._unknown_transport_outcome(name, e)
@@ -2347,6 +2353,38 @@ def _extract_tool_result(mcp_result: Any) -> Dict[str, Any]:
         "structuredContent": structured,
         "isError": is_error,
     }
+
+
+def _win32_foreground_window() -> Optional[Tuple[int, int, str]]:
+    """Resolve the foreground window via the Win32 API in <1ms.
+
+    Returns ``(pid, window_id, title)`` or ``None`` on failure. This bypasses
+    cua-driver's ``list_windows`` (which does a full UIA property walk and can
+    take 30-60s on systems with many processes) when we only need the
+    frontmost window.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return None
+
+        pid_val = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid_val))
+        pid = pid_val.value
+
+        title_buf = ctypes.create_unicode_buffer(512)
+        user32.GetWindowTextW(hwnd, title_buf, 512)
+        title = title_buf.value
+
+        return (pid, hwnd, title)
+    except Exception:
+        return None
 
 
 def _image_from_tool_result(out: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
@@ -2646,7 +2684,13 @@ class CuaDriverBackend(ComputerUseBackend):
         # accept anonymous calls (the cursor just won't render),
         # so we degrade rather than abort.
         try:
-            self._session.call_tool("start_session", {"session": self._session_id})
+            session_params: Dict[str, Any] = {"session": self._session_id}
+            # On Windows, request desktop capture_scope so get_desktop_state
+            # (D3D11, no UIA) is unlocked. The UIA-based window tools can hang
+            # for 30+ seconds on systems with many processes.
+            if sys.platform == "win32":
+                session_params["capture_scope"] = "desktop"
+            self._session.call_tool("start_session", session_params)
         except Exception as e:
             logger.debug("cua-driver start_session failed (continuing anonymous): %s", e)
 
@@ -2907,15 +2951,51 @@ class CuaDriverBackend(ComputerUseBackend):
                 "z_index": 0,
             }]
         else:
-            try:
-                windows = self._load_windows()
-            except Exception:
-                self._clear_active_target()
-                raise
-            if not windows:
-                # Diagnose instead of returning a bare 0x0: the dominant
-                # real-world cause on Linux is a locked desktop session.
-                return self._failed_capture(mode, _empty_discovery_reason())
+            # ── Windows fast path ────────────────────────────────────
+            # cua-driver 0.14.x's list_windows does a full UIA property walk
+            # for every top-level window, which on systems with 500+ processes
+            # takes 30-60+ seconds (vs 4ms for Win32 EnumWindows alone). When
+            # no app filter is requested (the common case: "capture whatever is
+            # in front"), skip list_windows entirely and resolve the foreground
+            # window via the Win32 API in <1ms.
+            if (
+                sys.platform == "win32"
+                and not app
+                and pid is None
+                and window_id is None
+            ):
+                fg = _win32_foreground_window()
+                if fg is not None:
+                    fg_pid, fg_hwnd, fg_title = fg
+                    windows = [{
+                        "app_name": "",
+                        "pid": fg_pid,
+                        "window_id": fg_hwnd,
+                        "off_screen": False,
+                        "title": fg_title,
+                        "z_index": 999,  # ensure frontmost
+                    }]
+                else:
+                    # Win32 fast path failed (rare) — fall through to list_windows
+                    try:
+                        windows = self._load_windows()
+                    except Exception:
+                        self._clear_active_target()
+                        raise
+                    if not windows:
+                        # Diagnose instead of returning a bare 0x0: the dominant
+                        # real-world cause on Linux is a locked desktop session.
+                        return self._failed_capture(mode, _empty_discovery_reason())
+            else:
+                try:
+                    windows = self._load_windows()
+                except Exception:
+                    self._clear_active_target()
+                    raise
+                if not windows:
+                    # Diagnose instead of returning a bare 0x0: the dominant
+                        # real-world cause on Linux is a locked desktop session.
+                        return self._failed_capture(mode, _empty_discovery_reason())
 
         # Filter by app name (case-insensitive substring) if requested.
         # When the filter matches nothing, surface that explicitly instead of
@@ -3004,6 +3084,58 @@ class CuaDriverBackend(ComputerUseBackend):
         window_title = ""
 
         if mode == "vision":
+            # ── Windows D3D11 fast path ──────────────────────────────
+            # On Windows, get_desktop_state uses D3D11 Graphics Capture
+            # (no UIA tree walk) and returns a full-screen screenshot in
+            # ~1s. The UIA-based get_window_state/screenshot tools can hang
+            # for 30+ seconds when the UIA subsystem is degraded. Try the
+            # fast path first; fall back to the UIA path only if it fails.
+            if sys.platform == "win32":
+                try:
+                    ds_out = self._call_capture_tool(
+                        "get_desktop_state",
+                        {"session": self._session_id},
+                    )
+                    png_b64, image_mime_type = _image_from_tool_result(ds_out)
+                    if png_b64:
+                        # Parse dimensions from image data or structuredContent.
+                        sc = ds_out.get("structuredContent") or {}
+                        if isinstance(sc, dict):
+                            width = sc.get("screenshot_width", 0) or width
+                            height = sc.get("screenshot_height", 0) or height
+                        if not width or not height:
+                            # Try parsing from the data string
+                            data_str = ds_out.get("data")
+                            if isinstance(data_str, str):
+                                import re as _re
+                                dim_match = _re.search(r'(\d+)x(\d+)\s*px', data_str)
+                                if dim_match:
+                                    width = int(dim_match.group(1))
+                                    height = int(dim_match.group(2))
+                        window_title = app_name or ""
+                    if not png_b64:
+                        raise RuntimeError("get_desktop_state returned no image")
+                except Exception as e:
+                    logger.warning(
+                        "cua-driver get_desktop_state failed on Windows (%s); "
+                        "falling back to UIA screenshot path", e,
+                    )
+                    png_b64 = None
+                    image_mime_type = None
+                if png_b64:
+                    import base64 as _b64
+                    raw = _b64.b64decode(png_b64, validate=False)
+                    return CaptureResult(
+                        mode=mode,
+                        width=width,
+                        height=height,
+                        png_b64=png_b64,
+                        elements=[],
+                        app=app_name,
+                        window_title=window_title,
+                        png_bytes_len=len(raw),
+                        image_mime_type=image_mime_type or "image/png",
+                    )
             # Plain screenshot, no AX walk. cua-driver dropped the standalone
             # `screenshot` tool (≥0.5.x) and folded full-window PNG capture
             # into `get_window_state`. Route accordingly:

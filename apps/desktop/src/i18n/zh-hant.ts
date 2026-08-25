@@ -2767,6 +2767,14 @@ export const zhHant = defineLocale({
     }
   },
 
+  avatarEditor: {
+    title: '編輯頭像',
+    description: '自訂雙方在對話中的顯示名稱與頭像。',
+    youLabel: '你（用戶）',
+    hermesLabel: 'Hermes（助手）',
+    placeholder: '輸入名稱'
+  },
+
   prompts: {
     gatewayDisconnected: 'Hermes 閘道未連線',
     sudoSendFailed: '無法傳送 sudo 密碼',

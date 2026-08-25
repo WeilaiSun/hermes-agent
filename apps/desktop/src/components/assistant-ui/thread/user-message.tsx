@@ -1,4 +1,5 @@
 import { ActionBarPrimitive, BranchPickerPrimitive, MessagePrimitive, useAuiState } from '@assistant-ui/react'
+import { useStore } from '@nanostores/react'
 import { type FC, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 
 import { DirectiveContent } from '@/components/assistant-ui/directive-text'
@@ -8,12 +9,14 @@ import { MessageTimelineTimestamp } from '@/components/assistant-ui/thread/timel
 import { type RestoreMessageTarget } from '@/components/assistant-ui/thread/types'
 import { useMessageReactions } from '@/components/assistant-ui/thread/use-message-reactions'
 import { UserMessageText } from '@/components/assistant-ui/thread/user-message-text'
+import { MessageAvatar } from '@/components/chat/message-avatar'
 import { Codicon } from '@/components/ui/codicon'
 import { useResizeObserver } from '@/hooks/use-resize-observer'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
 import { StopFilled } from '@/lib/icons'
 import { cn } from '@/lib/utils'
+import { $avatarNames, DEFAULT_NAMES } from '@/store/avatar'
 import { $gateway } from '@/store/gateway'
 import { notifyThreadEditOpen } from '@/store/thread-scroll'
 import { isWatchWindow } from '@/store/windows'
@@ -266,6 +269,7 @@ export const UserMessage: FC<{
 }> = ({ onCancel, onRequestRestoreConfirm }) => {
   const { t } = useI18n()
   const copy = t.assistant.thread
+  const userName = useStore($avatarNames).user || DEFAULT_NAMES.user
   const messageId = useAuiState(s => s.message.id)
   const content = useAuiState(s => s.message.content)
   const messageText = messageContentText(content)
@@ -430,20 +434,27 @@ export const UserMessage: FC<{
 
   return (
     <MessagePrimitive.Root asChild>
-      <StickyHumanMessageContainer
-        attachments={
-          // Attachments live BELOW the sticky bubble in normal flow, so they
-          // scroll away behind the pinned bubble instead of riding along with
-          // it. Image refs render as thumbnails, file refs as chips; no border.
-          attachmentRefs.length > 0 ? (
-            <div className="flex flex-wrap gap-1 -mt-3 mb-2">
-              <DirectiveContent text={attachmentRefs.join(' ')} />
-            </div>
-          ) : null
-        }
-        messageId={messageId}
-      >
-        <ActionBarPrimitive.Root className="relative w-full max-w-full" data-slot="aui_user-bubble-actions">
+      <div className="message-row message-row-user contents" data-slot="message-row">
+        <div className="absolute right-0 top-0 z-50">
+          <MessageAvatar clickToEdit role="user" />
+        </div>
+        <StickyHumanMessageContainer
+          attachments={
+            // Attachments live BELOW the sticky bubble in normal flow, so they
+            // scroll away behind the pinned bubble instead of riding along with
+            // it. Image refs render as thumbnails, file refs as chips; no border.
+            attachmentRefs.length > 0 ? (
+              <div className="flex flex-wrap gap-1 -mt-3 mb-2">
+                <DirectiveContent text={attachmentRefs.join(' ')} />
+              </div>
+            ) : null
+          }
+          messageId={messageId}
+        >
+          <span className="message-name-label mb-0.5 mr-14 self-end max-w-[75%] text-[0.6875rem] leading-4 text-(--ui-text-tertiary) select-none">
+            {userName}
+          </span>
+          <ActionBarPrimitive.Root className="relative mr-14 w-full max-w-[75%] self-end" data-slot="aui_user-bubble-actions">
           <div className="human-message-with-todos-wrapper flex w-full flex-col gap-0">
             <ReactionPicker
               onOpenChange={setPickerOpen}
@@ -605,7 +616,8 @@ export const UserMessage: FC<{
             </BranchPickerPrimitive.Root>
           </div>
         </ActionBarPrimitive.Root>
-      </StickyHumanMessageContainer>
+        </StickyHumanMessageContainer>
+      </div>
     </MessagePrimitive.Root>
   )
 }

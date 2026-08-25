@@ -6,7 +6,10 @@ import {
   useAuiState,
   useMessageRuntime
 } from '@assistant-ui/react'
-import { useStore } from '@nanostores/react'
+import { useStore as useNanostore } from '@nanostores/react'
+
+import { MessageAvatar } from '@/components/chat/message-avatar'
+import { $avatarNames, DEFAULT_NAMES } from '@/store/avatar'
 import { type FC, type ReactNode, useCallback, useMemo, useState } from 'react'
 
 import { useSessionView } from '@/app/chat/session-view'
@@ -198,8 +201,16 @@ const AssistantMessageBody: FC<AssistantMessageProps & { collapsedNotice?: null 
   // are off, so the root carries no listener at all.
   const onDoubleClick = useTapbackDoubleClick(messageId, 'assistant')
 
+  const assistantName = useNanostore($avatarNames).assistant || DEFAULT_NAMES.assistant
+
   return (
-    <MessagePrimitive.Root
+    <div className="message-row message-row-assistant flex w-full min-w-0 items-start justify-start gap-2" data-slot="message-row">
+      <MessageAvatar clickToEdit role="assistant" />
+      <div className="flex min-w-0 flex-1 flex-col items-start">
+        <span className="message-name-label mb-0.5 ml-1 text-[0.6875rem] leading-4 text-(--ui-text-tertiary) select-none">
+          {assistantName}
+        </span>
+        <MessagePrimitive.Root
       className={cn(
         'group flex w-full min-w-0 max-w-full flex-col gap-0 self-start overflow-hidden',
         collapsedNotice && 'pb-(--conversation-turn-gap)'
@@ -257,6 +268,8 @@ const AssistantMessageBody: FC<AssistantMessageProps & { collapsedNotice?: null 
         </>
       )}
     </MessagePrimitive.Root>
+      </div>
+    </div>
   )
 }
 
@@ -525,9 +538,9 @@ const AssistantActionBar: FC<MessageActionProps> = ({ messageId, getMessageText,
 const ReadAloudButton: FC<{ getText: () => string; messageId: string }> = ({ getText, messageId }) => {
   const { t } = useI18n()
   const copy = t.assistant.thread
-  const voicePlayback = useStore($voicePlayback)
+  const voicePlayback = useNanostore($voicePlayback)
   const view = useSessionView()
-  const sessionId = useStore(view.$runtimeId)
+  const sessionId = useNanostore(view.$runtimeId)
 
   const readAloudStatus =
     voicePlayback.source === 'read-aloud' && voicePlayback.messageId === messageId ? voicePlayback.status : 'idle'

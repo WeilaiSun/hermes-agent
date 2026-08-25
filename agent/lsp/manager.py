@@ -45,6 +45,7 @@ from agent.lsp import eventlog
 from agent.lsp.client import (
     DIAGNOSTICS_DOCUMENT_WAIT,
     LSPClient,
+    file_uri,
 )
 from agent.lsp.servers import (
     ServerContext,
@@ -708,6 +709,83 @@ class LSPService:
             "broken": broken,
             "disabled_servers": sorted(self._disabled_servers),
         }
+
+    def query_symbol(
+        self,
+        file_path: str,
+        *,
+        kind: str = "definition",
+        line: Optional[int] = None,
+        character: Optional[int] = None,
+        query: Optional[str] = None,
+        timeout: float = 30.0,
+    ) -> Dict[str, Any]:
+        """Query the LSP server for symbol-level information.
+
+        ``kind`` is one of: ``definition``, ``references``, ``symbols``.
+
+        - ``definition`` / ``references``: need ``line`` + ``character``
+          (0-based) pointing at the symbol occurrence in ``file_path``.
+          ``definition`` returns the target location(s); ``references``
+          returns every reference with its location.
+        - ``symbols``: returns the document outline (classes/functions)
+          of ``file_path``; ``line``/``character``/``query`` are unused.
+
+        Returns ``{"ok": true, "kind": ..., "result": [...]}`` on success,
+        or ``{"ok": false, "error": ...}`` when no server is available /
+        the request fails. Never raises for LSP failures.
+        """
+        try:
+            client = self._loop.run(self._query_symbol_async(
+                file_path, kind=kind, line=line, character=character,
+                query=query, timeout=timeout,
+            ), timeout=timeout + 5.0)
+            return client
+        except Exception as e:  # noqa: BLE001
+            logger.debug("query_symbol(%s, %s) failed: %s", file_path, kind, e)
+            return {"ok": False, "error": str(e)}
+
+    async def _query_symbol_async(
+        self,
+        file_path: str,
+        *,
+        kind: str,
+        line: Optional[int],
+        character: Optional[int],
+        query: Optional[str],
+        timeout: float,
+    ) -> Dict[str, Any]:
+        client = await self._get_or_spawn(file_path)
+        if client is None:
+            return {"ok": False, "error": "no LSP server available for this file"}
+        try:
+            await client.open_file(file_path, language_id=language_id_for(file_path))
+            await client.save_file(file_path)
+            uri = file_uri(file_path)
+            if kind == "symbols":
+                params: Dict[str, Any] = {"textDocument": {"uri": uri}}
+                method = "textDocument/documentSymbol"
+            elif kind in ("definition", "references"):
+                if line is None or character is None:
+                    return {"ok": False, "error": f"{kind} needs line + character (0-based)"}
+                params = {
+                    "textDocument": {"uri": uri},
+                    "position": {"line": line, "character": character},
+                }
+                method = (
+                    "textDocument/definition"
+                    if kind == "definition"
+                    else "textDocument/references"
+                )
+                if kind == "references":
+                    params["context"] = {"includeDeclaration": True}
+            else:
+                return {"ok": False, "error": f"unknown kind: {kind}"}
+            result = await client._send_request_with_retry(method, params, timeout=timeout)
+            self._last_used[(client.server_id, client.workspace_root)] = time.time()
+            return {"ok": True, "kind": kind, "result": result}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e)}
 
 
 def _diag_key(d: Dict[str, Any]) -> str:

@@ -19,6 +19,7 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { $panesFlipped, dismissAutoProject } from '@/store/layout'
@@ -212,7 +213,9 @@ export function ProjectMenu({
     </DropdownMenuTrigger>
   )
 
-  const trigger = anchorRef ? triggerButton : <PopoverAnchor asChild>{triggerButton}</PopoverAnchor>
+  const trigger = (
+    <Tip label={p.menu}>{anchorRef ? triggerButton : <PopoverAnchor asChild>{triggerButton}</PopoverAnchor>}</Tip>
+  )
 
   return (
     <Popover onOpenChange={setAppearanceOpen} open={appearanceOpen}>

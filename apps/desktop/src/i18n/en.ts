@@ -3237,6 +3237,14 @@ export const en: Translations = {
     }
   },
 
+  avatarEditor: {
+    title: 'Edit chat avatars',
+    description: 'Customise the display name and avatar for each participant.',
+    youLabel: 'You (user)',
+    hermesLabel: 'Hermes (assistant)',
+    placeholder: 'Enter name'
+  },
+
   prompts: {
     gatewayDisconnected: 'Hermes gateway is not connected',
     sudoSendFailed: 'Could not send sudo password',

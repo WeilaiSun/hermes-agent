@@ -37,6 +37,7 @@
 
 import { resolve, join } from 'node:path'
 import { existsSync } from 'node:fs'
+import { setTimeout as sleep } from 'node:timers/promises'
 
 import { rcedit } from 'rcedit'
 
@@ -59,17 +60,35 @@ async function stampExeIdentity(exe, desktopRoot = resolve(import.meta.dirname, 
   console.log(`[set-exe-identity] stamping ${exe}`)
   console.log(`[set-exe-identity] icon: ${icon}`)
 
-  await rcedit(exe, {
-    icon,
-    'version-string': {
-      ProductName: 'Hermes',
-      FileDescription: 'Hermes',
-      CompanyName: 'Nous Research',
-      LegalCopyright: 'Copyright (c) 2026 Nous Research'
+  // Windows file-lock race: electron-builder just copied Hermes.exe into
+  // appOutDir and the handle may not be released yet, so rcedit's first write
+  // can fail with "Unable to commit changes". Retry with backoff — transient
+  // lock contention resolves within a couple of seconds in practice.
+  const MAX_ATTEMPTS = 3
+  let lastError
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      await rcedit(exe, {
+        icon,
+        'version-string': {
+          ProductName: 'Hermes',
+          FileDescription: 'Hermes',
+          CompanyName: 'Nous Research',
+          LegalCopyright: 'Copyright (c) 2026 Nous Research'
+        }
+      })
+      console.log('[set-exe-identity] done — Hermes icon + identity stamped')
+      return
+    } catch (err) {
+      lastError = err
+      if (attempt < MAX_ATTEMPTS) {
+        const delay = attempt * 1000
+        console.warn(`[set-exe-identity] attempt ${attempt}/${MAX_ATTEMPTS} failed (${err.message}); retrying in ${delay}ms`)
+        await sleep(delay)
+      }
     }
-  })
-
-  console.log('[set-exe-identity] done — Hermes icon + identity stamped')
+  }
+  throw lastError
 }
 
 export { stampExeIdentity }

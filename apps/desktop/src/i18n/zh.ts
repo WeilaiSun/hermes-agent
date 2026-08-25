@@ -3388,6 +3388,14 @@ export const zh: Translations = {
     }
   },
 
+  avatarEditor: {
+    title: '编辑头像',
+    description: '自定义双方在对话中的显示名称与头像。',
+    youLabel: '你（用户）',
+    hermesLabel: 'Hermes（助手）',
+    placeholder: '输入名称'
+  },
+
   prompts: {
     gatewayDisconnected: 'Hermes 网关未连接',
     sudoSendFailed: '无法发送 sudo 密码',

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from typing import Optional
 
 
 def register_subparser(subparsers: argparse._SubParsersAction) -> None:
@@ -63,6 +64,41 @@ def register_subparser(subparsers: argparse._SubParsersAction) -> None:
     sub_which = sub.add_parser("which", help="Print binary path for a server")
     sub_which.add_argument("server", help="Server id")
 
+    # Symbol-level queries (definition / references / document symbols).
+    sub_query = sub.add_parser(
+        "query",
+        help="Query symbol-level info from the LSP server",
+        description=(
+            "Ask the language server for a symbol's definition, references, "
+            "or the document outline. Backs the codegraph-style navigation "
+            "for Hermes (definitions / references / symbols)."
+        ),
+    )
+    sub_query.add_argument(
+        "file", help="Path to the source file containing the symbol"
+    )
+    sub_query.add_argument(
+        "--kind",
+        choices=["definition", "references", "symbols"],
+        default="definition",
+        help="What to ask the language server (default: definition)",
+    )
+    sub_query.add_argument(
+        "--line",
+        type=int,
+        default=None,
+        help="0-based line of the symbol (required for definition/references)",
+    )
+    sub_query.add_argument(
+        "--character",
+        type=int,
+        default=None,
+        help="0-based character offset in the line (required for definition/references)",
+    )
+    sub_query.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON"
+    )
+
     parser.set_defaults(func=run_lsp_command)
 
 
@@ -82,6 +118,14 @@ def run_lsp_command(args: argparse.Namespace) -> int:
             return _cmd_restart()
         if sub == "which":
             return _cmd_which(args.server)
+        if sub == "query":
+            return _cmd_query(
+                args.file,
+                kind=getattr(args, "kind", "definition"),
+                line=getattr(args, "line", None),
+                character=getattr(args, "character", None),
+                emit_json=getattr(args, "json", False),
+            )
         sys.stderr.write(f"unknown lsp subcommand: {sub}\n")
         return 2
     except KeyboardInterrupt:
@@ -249,14 +293,83 @@ def _cmd_restart() -> int:
 def _cmd_which(server_id: str) -> int:
     from agent.lsp.install import INSTALL_RECIPES, _existing_binary
 
-    recipe = INSTALL_RECIPES.get(server_id)
-    bin_name = (recipe or {}).get("bin", server_id)
+    pkg = _recipe_pkg_for(server_id)
+    recipe = INSTALL_RECIPES.get(pkg)
+    bin_name = (recipe or {}).get("bin", pkg)
     resolved = _existing_binary(bin_name)
     if resolved:
         sys.stdout.write(resolved + "\n")
         return 0
     sys.stderr.write(f"{server_id}: not installed\n")
     return 1
+
+
+def _cmd_query(
+    file_path: str,
+    *,
+    kind: str,
+    line: Optional[int],
+    character: Optional[int],
+    emit_json: bool,
+) -> int:
+    """``hermes lsp query <file> --kind ...`` — symbol-level LSP lookup."""
+    from agent.lsp import get_service
+
+    svc = get_service()
+    if svc is None:
+        sys.stderr.write("LSP service not enabled\n")
+        return 2
+    if not svc.is_active():
+        sys.stderr.write("LSP service not active (no enabled servers?)\n")
+        return 2
+
+    import json as _json
+
+    if kind in ("definition", "references") and (line is None or character is None):
+        sys.stderr.write(
+            f"hermes lsp query: --kind {kind} requires --line and --character "
+            "(0-based)\n"
+        )
+        return 2
+
+    result = svc.query_symbol(
+        file_path, kind=kind, line=line, character=character
+    )
+    if emit_json:
+        sys.stdout.write(_json.dumps(result, indent=2, ensure_ascii=False) + "\n")
+        return 0 if result.get("ok") else 1
+
+    if not result.get("ok"):
+        sys.stderr.write(f"query failed: {result.get('error', 'unknown')}\n")
+        return 1
+
+    payload = result.get("result")
+    if kind == "symbols":
+        if not payload:
+            sys.stdout.write("(no symbols found)\n")
+            return 0
+        for sym in payload if isinstance(payload, list) else []:
+            name = sym.get("name", "?")
+            s_kind = sym.get("kind", "")
+            rng = sym.get("selectionRange", {}).get("start", {})
+            sys.stdout.write(
+                f"{name}\t{kind}\t{s_kind}\t"
+                f"{rng.get('line', 0)}:{rng.get('character', 0)}\n"
+            )
+        return 0
+
+    locations = payload if isinstance(payload, list) else ([payload] if payload else [])
+    if not locations:
+        sys.stdout.write("(no locations found)\n")
+        return 0
+    for loc in locations:
+        rng = (loc.get("range") or {}).get("start", {})
+        uri = loc.get("uri", "?")
+        sys.stdout.write(
+            f"{uri}\t{kind}\t"
+            f"{rng.get('line', 0)}:{rng.get('character', 0)}\n"
+        )
+    return 0
 
 
 def _recipe_pkg_for(server_id: str) -> str:

@@ -3196,3 +3196,43 @@ html:has([data-hud-shell]) [data-slot='popover-content'] {
 [data-hud-shell] [data-slot='composer-bounds'] *::-webkit-scrollbar {
   display: none;
 }
+
+
+/*  Message avatars                                                   */
+/* ------------------------------------------------------------------ */
+
+.message-avatar {
+  border-radius: 9999px;
+  overflow: hidden;
+  position: relative;
+  z-index: 50;
+}
+
+.avatar-fallback-ring {
+  box-shadow: 0 0 0 1px var(--ui-stroke-tertiary, rgba(255, 255, 255, 0.1));
+}
+
+.message-avatar-editable:focus-visible {
+  outline: 2px solid var(--dt-midground, var(--dt-primary));
+  outline-offset: 2px;
+}
+
+/* Fade the name label in on hover — subtle, not distracting. */
+[data-slot="message-row"] .message-name-label,
+[data-slot="aui_user-message-root"] .message-name-label {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+[data-slot="message-row"]:hover .message-name-label,
+[data-slot="message-row"]:focus-within .message-name-label,
+[data-slot="aui_user-message-root"]:hover .message-name-label,
+[data-slot="aui_user-message-root"]:focus-within .message-name-label {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-name-label {
+    transition: none;
+  }
+}

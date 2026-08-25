@@ -282,10 +282,31 @@ class LSPClient:
 
     @staticmethod
     def _win_wrap_cmd(cmd: List[str]) -> List[str]:
-        """On Windows, wrap .cmd/.bat shims so CreateProcess can run them."""
+        """On Windows, wrap .cmd/.bat shims so CreateProcess can run them.
+
+        npm's node_modules/.bin ships both a no-extension POSIX shim and a
+        ``.cmd`` wrapper.  ``shutil.which`` may resolve to the no-extension
+        shim (a ``#!/bin/sh`` script), which CreateProcess cannot execute
+        directly (WinError 193).  When the resolved command has no
+        ``.cmd``/``.bat``/``.exe`` suffix but a sibling ``.cmd`` exists,
+        prefer the sibling so the server actually starts on Windows.
+        """
         exe = cmd[0]
         if exe.lower().endswith((".cmd", ".bat")):
             return ["cmd.exe", "/c", *cmd]
+        if sys.platform == "win32" and not exe.lower().endswith((".exe",)):
+            # No extension — likely a POSIX shim from node_modules/.bin.
+            # Prefer the sibling .cmd wrapper when present.  Resolve first:
+            # ``lsp/bin/<name>`` is often a symlink to node_modules/.bin/<name>,
+            # and the .cmd sibling lives at the resolved location.
+            import os as _os
+            from pathlib import Path as _Path
+            try:
+                cand = _Path(exe).resolve().with_suffix(".cmd")
+            except OSError:
+                cand = None
+            if cand is not None and _os.path.exists(cand):
+                return ["cmd.exe", "/c", str(cand), *cmd[1:]]
         return cmd
 
     async def _spawn(self) -> None:

@@ -2770,6 +2770,14 @@ export interface Translations {
     }
   }
 
+  avatarEditor: {
+    title: string
+    description: string
+    youLabel: string
+    hermesLabel: string
+    placeholder: string
+  }
+
   prompts: {
     gatewayDisconnected: string
     sudoSendFailed: string
