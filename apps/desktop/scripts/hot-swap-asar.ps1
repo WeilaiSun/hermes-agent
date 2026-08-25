@@ -17,7 +17,7 @@
 $ErrorActionPreference = 'Stop'
 
 # ---- paths ----
-$desktopRoot  = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent   # apps/desktop
+$desktopRoot  = Split-Path $PSScriptRoot -Parent   # apps/desktop (scripts 的上级)
 $release      = Join-Path $desktopRoot 'release'
 $winUnpacked  = Join-Path $release 'win-unpacked'
 $resources    = Join-Path $winUnpacked 'resources'
